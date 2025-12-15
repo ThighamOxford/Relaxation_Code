@@ -47,7 +47,7 @@ def curl(X):
     Returns (rot(Parallel), curl(Perpendicular)).
     """
     if isinstance(X, tuple):
-        return (fd_curl(X[1]), fd_rot(X[0]))
+        return (fd_rot(X[1]), fd_curl(X[0]))
     else:
         return fd_curl(X)
 

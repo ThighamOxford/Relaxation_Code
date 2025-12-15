@@ -11,7 +11,7 @@ def relaxation_pressure(
     Nx          = 16,
     Ny          = 16,
     order       = 2,
-    T           = 1e3,
+    T           = 1e4,
     dt_val      = 2e-3,  # If using the golden stepsize, this should be set sufficiently low that a uniform stepsize does not see oscillations
     golden_dt   = True,  # Whether to use the golden stepsize schedule
     dt_danger   = 0.5,  # Value above which we use a stronger solver (linesearch)
@@ -59,7 +59,7 @@ def relaxation_pressure(
         ((0.3, 0.3), 0.2, 1, 1),
         ((0.7, 0.7), 0.2, 1, -1),
     )
-    def helix(position, radius, strength):
+    def helix(position, radius, strength, circulation):
         r = sqrt((x - position[0])**2 + (y - position[1])**2)
         return (
             strength    * conditional(le(r, radius), 1 - (r/radius)**2, 0),
@@ -173,12 +173,14 @@ def relaxation_pressure(
         energy = assemble(0.5 * inner(B, B) * dx)
         helicity = helicity_solver.solve(B)
         u_norm = assemble(inner(u, u) * dx)
-        div_B_norm = assemble(inner(div(B), div(B)) * dx)        
+        div_B_norm = assemble(inner(div(B), div(B)) * dx)  
+        Bdot_norm = assemble(inner(dB_dt, dB_dt) * dx)    
         if mesh.comm.rank == 0:
             print(BLUE % f"  Energy:    {energy:.6e}")
             print(BLUE % f"  Helicity:  {helicity:.6e}")
             print(BLUE % f"  |u|^2:     {u_norm:.6e}")
             print(BLUE % f"  |div B|^2: {div_B_norm:.6e}")
+            print(BLUE % f" ||Bdot||^2: {Bdot_norm:.6e}")
 
         # Update previous step
         Bper_prev_sub.assign(Bper_sub)
