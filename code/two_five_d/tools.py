@@ -161,4 +161,4 @@ class HelicitySolver:
         (Aper, Apar, _) = split(self.z)
         A = (Aper, Apar)
         
-        return assemble(0.5 * inner(A, B) * dx)
+        return assemble((inner(A, B) - 0.5 * inner(A, curl(A))) * dx)
