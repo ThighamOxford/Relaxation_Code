@@ -44,7 +44,7 @@ def curl(X):
     """
     Curl operator for the 2.5D formulation.
     Takes in (Perpendicular, Parallel) components.
-    Returns (curl(Parallel), rot(Perpendicular)).
+    Returns (rot(Parallel), curl(Perpendicular)).
     """
     if isinstance(X, tuple):
         return (fd_curl(X[1]), fd_rot(X[0]))
