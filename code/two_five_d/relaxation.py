@@ -55,15 +55,15 @@ def relaxation_pressure(
     B_t = (Bper_t, Bpar_t); j_t = (jper_t, jpar_t); H_t = (Hper_t, Hpar_t); u_t = (uper_t, upar_t); E_t = (Eper_t, Epar_t)
 
     # Boris & Tom's fun ICs
-    helices = (  # (Position, Radius, Strength)
-        ((0.3, 0.3), 0.2, 1),
-        ((0.7, 0.7), 0.2, -1),
+    helices = (  # (Position, Radius, Strength, Circulation)
+        ((0.3, 0.3), 0.2, 1, 1),
+        ((0.7, 0.7), 0.2, 1, -1),
     )
     def helix(position, radius, strength):
         r = sqrt((x - position[0])**2 + (y - position[1])**2)
         return (
-            conditional(le(r, radius), 1 - (r/radius)**2, 0),
-            strength * conditional(le(r, radius), (1 - (r/radius)**2)**2 * radius / 2, 0)
+            strength    * conditional(le(r, radius), 1 - (r/radius)**2, 0),
+            circulation * conditional(le(r, radius), (1 - (r/radius)**2)**2 * radius / 2, 0)
         )
     Bper_ic = sum([helix(*helices_)[0] for helices_ in helices])
     phi_ic = sum([helix(*helices_)[1] for helices_ in helices])
