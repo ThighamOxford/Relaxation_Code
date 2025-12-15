@@ -1,6 +1,6 @@
 from firedrake import *
 from firedrake import inner as fd_inner, cross as fd_cross, div as fd_div, grad as fd_grad, curl as fd_curl, rot as fd_rot
-from ..solvers import build_linear_solver
+from solvers import build_linear_solver
 
 
 

@@ -3,12 +3,11 @@
 from firedrake import *
 import os
 from tools import inner, curl, cross, grad, div, get_spaces, project_div_free, HelicitySolver
-from ..solvers import build_nonlinear_solver
+from solvers import build_nonlinear_solver
 
 
 
 def relaxation_pressure(
-    R          = None,
     Nx         = 16,
     Ny         = 16,
     order      = 2,
