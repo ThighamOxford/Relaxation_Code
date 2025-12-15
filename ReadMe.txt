@@ -6,3 +6,5 @@ We aim to implement in cylindrical coordinates for Tokamak modelling.
 
 This uses concepts from the paper "Helicity-preserving finite element discretization for magnetic
 relaxation" by Mingdong He, Patrick E. Farrell, Kaibo Hu, and Boris D. Andrews, 2025.
+
+The file Relaxation.py runs the main code.
