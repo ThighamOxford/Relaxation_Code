@@ -8,15 +8,16 @@ from solvers import build_nonlinear_solver
 
 
 def relaxation_pressure(
-    Nx         = 16,
-    Ny         = 16,
-    order      = 2,
-    T          = 1e3,
-    dt_val     = 2e-3,  # If using the golden stepsize, this should be set sufficiently low that a uniform stepsize does not see oscillations
-    golden_dt  = True,  # Whether to use the golden stepsize schedule
-    dt_danger  = 0.5,  # Value above which we use a stronger solver (linesearch)
-    dt_max     = 1.5,  # Maximum stepsize
-    output_dir = "output",
+    Nx          = 16,
+    Ny          = 16,
+    order       = 2,
+    T           = 1e3,
+    dt_val      = 2e-3,  # If using the golden stepsize, this should be set sufficiently low that a uniform stepsize does not see oscillations
+    golden_dt   = True,  # Whether to use the golden stepsize schedule
+    dt_danger   = 0.5,  # Value above which we use a stronger solver (linesearch)
+    dt_max      = 1.5,  # Maximum stepsize
+    output_dir  = "output",
+    output_freq = 10,
 ):
     """
     Main simulation function.
@@ -184,7 +185,7 @@ def relaxation_pressure(
         Bpar_prev_sub.assign(Bpar_sub)
 
         # Output
-        if iteration % 10 == 0:
+        if iteration % output_freq == 0:
             pvd.write(Bper_sub, Bpar_sub)
             pvd_2.write(jper_sub, jpar_sub, Hper_sub, Hpar_sub, uper_sub, upar_sub, Eper_sub, Epar_sub, p_sub)
 
