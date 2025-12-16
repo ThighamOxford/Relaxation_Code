@@ -174,13 +174,13 @@ def relaxation_pressure(
         helicity = helicity_solver.solve(B)
         u_norm = assemble(inner(u, u) * dx)
         div_B_norm = assemble(inner(div(B), div(B)) * dx)  
-        Bdot_norm = assemble(inner(dB_dt, dB_dt) * dx)    
+        Bdot_norm = sqrt(assemble(inner(dB_dt, dB_dt) * dx))    
         if mesh.comm.rank == 0:
             print(BLUE % f"  Energy:    {energy:.6e}")
             print(BLUE % f"  Helicity:  {helicity:.6e}")
             print(BLUE % f"  |u|^2:     {u_norm:.6e}")
             print(BLUE % f"  |div B|^2: {div_B_norm:.6e}")
-            print(BLUE % f" ||Bdot||^2: {Bdot_norm:.6e}")
+            print(BLUE % f" ||Bdot||: {Bdot_norm:.6e}")
 
         # Update previous step
         Bper_prev_sub.assign(Bper_sub)
