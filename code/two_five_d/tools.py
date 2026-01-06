@@ -1,6 +1,7 @@
 from firedrake import *
 from firedrake import inner as fd_inner, cross as fd_cross, div as fd_div, grad as fd_grad, curl as fd_curl, rot as fd_rot
 from solvers import build_linear_solver
+import numpy as np
 
 
 
@@ -40,24 +41,29 @@ def grad(X):
     """
     return (None, fd_grad(X))
 
-def curl(X):
+def curl(X, R = None , cylindrical = False):
     """
     Curl operator for the 2.5D formulation.
     Takes in (Perpendicular, Parallel) components.
     Returns (rot(Parallel), curl(Perpendicular)).
     """
-    if isinstance(X, tuple):
+    if isinstance(X, tuple) and cylindrical == True:
+        return (fd_rot(X[1]), fd_curl(R*X[0]) / R)
+    elif isinstance(X, tuple):
         return (fd_rot(X[1]), fd_curl(X[0]))
     else:
         return fd_curl(X)
 
-def div(X):
+def div(X, R = None, cylindrical = False):
     """
     Divergence operator for the 2.5D formulation.
     Takes in (Perpendicular, Parallel) components.
+    Perp part must be div-free so only use parallel components. 
     Returns div(Parallel).
     """
-    if isinstance(X, tuple):
+    if isinstance(X, tuple) and cylindrical == True:
+        return fd_div(R*X[1]) / R
+    elif isinstance(X, tuple):
         return fd_div(X[1])
     else:
         return fd_div(X)
@@ -85,24 +91,36 @@ def get_spaces(mesh, order):
 
 # --- Projection ---
 
-def project_div_free(u_target, mesh, order, solver_parameters=None):
+def project_div_free(u_target, mesh, order, cylindrical = False, solver_parameters=None):
     _, _, _, Vn_, _, Vd = get_spaces(mesh, order)
+    R = SpatialCoordinate(mesh)[0]
     Z = MixedFunctionSpace([*Vd, Vn_])
-
     z = Function(Z)
     (uper, upar, p) = split(z)
-    u = (uper, upar)
+
     (uper_sub, upar_sub, _) = z.subfunctions
     
     (vper, vpar, q) = split(TestFunction(Z))
+ 
+    u = (uper, upar)
     v = (vper, vpar)
-    
-    F = (
-        inner(u, v) 
-      - inner(u_target, v)
-      + inner(p, div(v))
-      + inner(div(u), q)
-    ) * dx
+
+
+    if cylindrical == True:
+        F = (
+            inner(u, v) 
+        - inner(u_target, v)
+        + inner(p, div(v, R, True))
+        + inner(div(u, R, True), q)
+        ) * R * dx
+    else:
+        F = (
+            inner(u, v) 
+        - inner(u_target, v)
+        + inner(p, div(v))
+        + inner(div(u), q)
+        ) * dx
+
     
     bcs = [DirichletBC(Z.sub(i), 0, "on_boundary") for i in range(len(Z))]
     if solver_parameters is None: solver_parameters = {}
@@ -113,23 +131,24 @@ def project_div_free(u_target, mesh, order, solver_parameters=None):
     z_out = Function(Z_out)
     (uper_out_sub, upar_out_sub) = z_out.subfunctions
     uper_out_sub.assign(uper_sub); upar_out_sub.assign(upar_sub)
-    
     return z_out
 
 
-
-# --- Diagnostics ---
+ 
+ # --- Diagnostics ---
 
 class HelicitySolver:
     """
-    Computes the magnetic helicity H = \int A . B dx.
+    Computes the magnetic helicity H = \ int A . B dx.
     Solves for divergence-free A such that curl(A) = B (up to cohomology in perpendicular component).
     """
-    def __init__(self, mesh, order, solver_parameters=None):
+    def __init__(self, mesh, order, cylindrical = False, solver_parameters=None):
         Vg_, _, _, _, Vc, _ = get_spaces(mesh, order)
         Z = MixedFunctionSpace([*Vc, Vg_])
-        
+        R = SpatialCoordinate(mesh)[0]
         self.z = Function(Z)
+        self.cylindrical = cylindrical
+        self.R = R
         
         u = TrialFunction(Z)
         (Aper, Apar, phi) = split(u)
@@ -137,12 +156,18 @@ class HelicitySolver:
 
         (Aper_t, Apar_t, phi_t) = split(TestFunction(Z))
         self.A_t = (Aper_t, Apar_t)
-    
-        self.a = (
-            inner(curl(A), curl(self.A_t))
-          - inner(grad(phi), self.A_t)
-          - inner(A, grad(phi_t))
-        ) * dx
+        if cylindrical == True:
+            self.a = (
+                inner(curl(A, R, True), curl(self.A_t, R, True))
+            - inner(grad(phi), self.A_t)
+            - inner(A, grad(phi_t))
+            ) * 2 * np.pi* R * dx
+        else:
+            self.a = (
+                inner(curl(A), curl(self.A_t))
+            - inner(grad(phi), self.A_t)
+            - inner(A, grad(phi_t))
+            ) * dx
     
         self.bcs = [DirichletBC(Z.sub(i), 0, "on_boundary") for i in range(len(Z))]
         if solver_parameters is None:
@@ -151,9 +176,18 @@ class HelicitySolver:
             self.solver_parameters = solver_parameters
     
     def solve(self, B):
-        L = (
-            inner(B, curl(self.A_t))
-        ) * dx
+        """
+        If cylindrical system, this function assumes B has parallel component multiplied by R.
+        """
+        if self.cylindrical == True:
+            L = (
+                inner(B, curl(self.A_t, self.R, True ))
+            ) * 2 * np.pi * self.R * dx
+        else:
+            L = (
+                inner(B, curl(self.A_t))
+            ) * dx
+
     
         solver = build_linear_solver(self.a, L, self.z, bcs=self.bcs, solver_parameters=self.solver_parameters)
         solver.solve()
@@ -161,4 +195,7 @@ class HelicitySolver:
         (Aper, Apar, _) = split(self.z)
         A = (Aper, Apar)
         
-        return assemble((inner(A, B) - 0.5 * inner(A, curl(A))) * dx)
+        if self.cylindrical == True:
+            return assemble((inner(A, B) - 0.5 * inner(A, curl(A, self.R, True))) * 2 * np.pi * self.R * dx)
+        else:
+            return assemble((inner(A, B) - 0.5 * inner(A, curl(A))) * dx)
