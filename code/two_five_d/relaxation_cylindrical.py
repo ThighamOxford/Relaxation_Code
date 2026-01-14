@@ -8,6 +8,7 @@ outputs.
 
 from firedrake import *
 import os
+from firedrake import inner as fd_inner; from firedrake import div as fd_div
 from tools import inner, curl, cross, grad, div, get_spaces, project_div_free, HelicitySolver
 from solvers import build_nonlinear_solver
 
@@ -16,8 +17,8 @@ from solvers import build_nonlinear_solver
 def relaxation_pressure(
     NR          = 16,
     NZ          = 16,
-    refinement = 5,
-    order       = 2,
+    refinement = 4,
+    order       = 4,
     T           = 1e1,
     dt_val      = 2e-3,  # If using the golden stepsize, this should be set sufficiently low that a uniform stepsize does not see oscillations
     golden_dt   = True,  # Whether to use the golden stepsize schedule
@@ -32,26 +33,24 @@ def relaxation_pressure(
     # Create output directory
     if not os.path.exists(output_dir): os.makedirs(output_dir)
         
-    # base mesh: unit disk centered at origin (radius 1)
-    mesh = UnitDiskMesh(refinement)
 
-    # parameters
-    R0 = 0.5          # target disk radius (before y-stretch)
-    cx, cy = 1.0, 0.0
-    dy_stretch = 2.0  # stretch factor in y-direction to make an ellipse
+    # parameters for target ellipse
+    R0 = 0.25          # target disk radius (before y-stretch)
+    cx, cy = 1, 0.0
+    dy_stretch = 2.0  # stretch factor in y-direction to make an ellipse   
 
-    # SpatialCoordinate returns current physical coords on the mesh
-    x = SpatialCoordinate(mesh)
+    """Can comment out following code to generate ellipse mesh"""
+    # # base mesh
+    # mesh = UnitDiskMesh(refinement)
+    # # Generating ellipse
+    # x = SpatialCoordinate(mesh)
+    # X = as_vector((R0 * x[0] + cx,
+    #             R0 * dy_stretch * x[1] + cy))
+    # mesh.coordinates.interpolate(X)
+    # (R, Z) = SpatialCoordinate(mesh)
 
-    # Map: scale radius by R0, stretch y by dy_stretch, then translate to (cx, cy)
-    X = as_vector((R0 * x[0] + cx,
-                R0 * dy_stretch * x[1] + cy))
-
-    mesh.coordinates.interpolate(X)
-
-    # Now (R, Z) = SpatialCoordinate(mesh) will give coordinates in the oval domain
+    mesh = Mesh('ellipse_occ.msh')
     (R, Z) = SpatialCoordinate(mesh)
-
     # Function spaces
     (Vg_, _, _, _, Vc, Vd) = get_spaces(mesh, order)
     V = MixedFunctionSpace([*Vd, *Vc, *Vc, *Vc, *Vc, Vg_])
@@ -80,12 +79,8 @@ def relaxation_pressure(
     B_t = (Bper_t, Bpar_t); j_t = (jper_t, jpar_t); H_t = (Hper_t, Hpar_t); u_t = (uper_t, upar_t); E_t = (Eper_t, Epar_t)
 
     # Boris & Tom's fun ICs
-    # helices = (  # (Position, Radius, Strength, Circulation)
-    #     ((1.3, -0.2), 0.2, 1, 1),
-    #     ((1.7, 0.2), 0.2, 1, -1),
-    # )
     helices = (  # (Position, Radius, Strength, Circulation)
-    ( (1.0, 0.0), 0.35, 1, 1),
+    ( (cx, cy), R0/4, 1, 1),
     )
 
     def helix(position, radius, strength, circulation):
@@ -96,27 +91,34 @@ def relaxation_pressure(
         )
     Bper_ic = sum([helix(*helices_)[0] for helices_ in helices])
     phi_ic = sum([helix(*helices_)[1] for helices_ in helices])
+    ## Alternative stream function
+    # phi_ic = R**2 * exp( - ( (R - R0/4)**2 + Z**2 ) /10 )
 
-    Bpar_ic = as_vector([phi_ic.dx(1), - phi_ic.dx(0)])
-    # Boris & Tom's fun ICs
-    # Initial conditions
-    # (X0, Y0) = SpatialCoordinate(mesh)
-    # (Lx, Ly)  = (0.5, 1.0)
-    # Bper_ic = (Lx**2 - 4*X0**2) * (Ly**2 - 4*Y0**2) / 1e3
-    # # Take the rot for the parallel part
-    # Bpar_ic = as_vector([
-    #     (Lx**2 - 4*X0**2) * 8*Y0 / 1e3,
-    #     - 8*X0 * (Ly**2 - 4*Y0**2) / 1e3
-    # ])
+    Bpar_ic = as_vector([-phi_ic.dx(1) / R, phi_ic.dx(0) / R])
 
-    # project initial conditions as div free and put them in 2.5D cylindrical De Rham space
-    v_prev = project_div_free((Bper_ic, Bpar_ic), mesh, order, cylindrical = True)
+
+    solver_parameters = {
+        # SNES (nonlinear) opts
+        "snes_type": "newtonls",
+        "snes_rtol": 1e-10,
+        "snes_atol": 1e-12,
+        "snes_max_it": 10,
+        "snes_monitor": None,               # turns on SNES iteration monitoring
+        "snes_converged_reason": None,      # print why SNES stopped
+
+        # preconditioner / direct solver (MUMPS)
+        "ksp_type": "preonly",
+        "pc_type": "lu",
+        "pc_factor_mat_solver_type": "mumps",
+    }
+
+    v_prev = project_div_free((Bper_ic, Bpar_ic), mesh, order, cylindrical = True, solver_parameters = solver_parameters)
     (Bper_prev, Bpar_prev) = split(v_prev)
     (Bper_prev_sub, Bpar_prev_sub) = v_prev.subfunctions
-    Bper_sub.assign(Bper_prev_sub)
-    Bpar_sub.assign(Bpar_prev_sub)
-    temp = sqrt(assemble(inner(div(B, R, True), div(B, R, True)) * 2 * np.pi * R * dx))
-    print("Delete this - divB norm after div free projection is", temp)
+    Bper_sub.assign(Bper_prev_sub); Bpar_sub.assign(Bpar_prev_sub)
+
+    divnorm_init = sqrt(assemble(inner(div(B, R, True), div(B, R, True)) * 2 * np.pi * R * dx))
+    print("Delete this - divB norm after div free projection is", divnorm_init)
 
     # Time variable
     t = Constant(0)

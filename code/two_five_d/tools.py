@@ -93,25 +93,24 @@ def get_spaces(mesh, order):
 
 def project_div_free(u_target, mesh, order, cylindrical = False, solver_parameters=None):
     _, _, _, Vn_, _, Vd = get_spaces(mesh, order)
+
     R = SpatialCoordinate(mesh)[0]
     Z = MixedFunctionSpace([*Vd, Vn_])
     z = Function(Z)
     (uper, upar, p) = split(z)
-
     (uper_sub, upar_sub, _) = z.subfunctions
     
     (vper, vpar, q) = split(TestFunction(Z))
- 
     u = (uper, upar)
     v = (vper, vpar)
 
-
     if cylindrical == True:
         F = (
+            # Note: div(...) returns fd_div(R*X)/R. Multiply whole weak form by R for measure.
             inner(u, v) 
         - inner(u_target, v)
-        + inner(p, div(v, R, True))
-        + inner(div(u, R, True), q)
+        - inner(p, div(v, R, True))
+        - inner(div(u, R, True), q)
         ) * R * dx
     else:
         F = (
@@ -121,21 +120,35 @@ def project_div_free(u_target, mesh, order, cylindrical = False, solver_paramete
         + inner(div(u), q)
         ) * dx
 
+
+    # enforce zero normal on parallel component RT elements 
+    bc_rt = DirichletBC(Z.sub(1), Constant((0.0, 0.0)), "on_boundary")
+    bcs = [bc_rt]
+
+    # n = FacetNormal(mesh)
+
+    # # g_expr = Constant((0.0, 0.0))   # or whatever you prescribe on the boundary
+
+    # # flux = assemble(dot(R * g_expr, n) * ds)
+    # # print("Weighted boundary flux =", float(flux))
     
-    bcs = [DirichletBC(Z.sub(i), 0, "on_boundary") for i in range(len(Z))]
-    if solver_parameters is None: solver_parameters = {}
+    #     # weighted boundary flux (no 2*pi)
+    # flux = assemble(dot(R * upar, n) * ds)
+    # print("weighted net flux (∫ r B·n ds):", float(flux))
+
+   
         
     solve(F == 0, z, bcs=bcs, solver_parameters=solver_parameters)
     
+    test = sqrt(assemble(inner(div(u, R, True), div(u, R, True)) * 2 * np.pi * R * dx))
+    print("divergence is ", test)
     Z_out = MixedFunctionSpace([*Vd])
     z_out = Function(Z_out)
     (uper_out_sub, upar_out_sub) = z_out.subfunctions
     uper_out_sub.assign(uper_sub); upar_out_sub.assign(upar_sub)
+
     return z_out
 
-
- 
- # --- Diagnostics ---
 
 class HelicitySolver:
     """
