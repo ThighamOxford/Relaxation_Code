@@ -17,7 +17,7 @@ def inner(X, Y):
     else:
         return fd_inner(X, Y)
 
-def cross(X, Y):
+def cross(X, Y, R = None):
     """
     Cross product for 2.5D vectors represented as (scalar, vector).
     X = (Xper, Xpar)
@@ -37,6 +37,7 @@ def cross(X, Y):
 def grad(X):
     """
     Gradient operator for the potential phi.
+    No cylindrical case as we have axisymmetry.
     Returns (None, grad(X)).
     """
     return (None, fd_grad(X))
@@ -68,8 +69,6 @@ def div(X, R = None, cylindrical = False):
     else:
         return fd_div(X)
 
-
-
 # --- Spaces ---
 
 def get_spaces(mesh, order):
@@ -87,8 +86,6 @@ def get_spaces(mesh, order):
     
     return Vg_, Vr_, Vd_, Vn_, Vc, Vd
 
-
-
 # --- Projection ---
 
 def project_div_free(u_target, mesh, order, cylindrical = False, solver_parameters=None):
@@ -96,21 +93,27 @@ def project_div_free(u_target, mesh, order, cylindrical = False, solver_paramete
 
     R = SpatialCoordinate(mesh)[0]
     Z = MixedFunctionSpace([*Vd, Vn_])
+    print(Z.dim())
     z = Function(Z)
     (uper, upar, p) = split(z)
     (uper_sub, upar_sub, _) = z.subfunctions
     
     (vper, vpar, q) = split(TestFunction(Z))
-    u = (uper, upar)
-    v = (vper, vpar)
+    u = (uper, upar / R)
+    v = (vper, vpar / R)
+    n = FacetNormal(mesh)
+
+    p_ = p / R
+    q_ = q / R
+
 
     if cylindrical == True:
         F = (
             # Note: div(...) returns fd_div(R*X)/R. Multiply whole weak form by R for measure.
             inner(u, v) 
         - inner(u_target, v)
-        - inner(p, div(v, R, True))
-        - inner(div(u, R, True), q)
+        - inner(p_, div(v, R, True))
+        - inner(div(u, R, True), q_)
         ) * R * dx
     else:
         F = (
@@ -120,34 +123,21 @@ def project_div_free(u_target, mesh, order, cylindrical = False, solver_paramete
         + inner(div(u), q)
         ) * dx
 
-
     # enforce zero normal on parallel component RT elements 
     bc_rt = DirichletBC(Z.sub(1), Constant((0.0, 0.0)), "on_boundary")
     bcs = [bc_rt]
-
-    # n = FacetNormal(mesh)
-
-    # # g_expr = Constant((0.0, 0.0))   # or whatever you prescribe on the boundary
-
-    # # flux = assemble(dot(R * g_expr, n) * ds)
-    # # print("Weighted boundary flux =", float(flux))
-    
-    #     # weighted boundary flux (no 2*pi)
-    # flux = assemble(dot(R * upar, n) * ds)
-    # print("weighted net flux (∫ r B·n ds):", float(flux))
-
-   
-        
     solve(F == 0, z, bcs=bcs, solver_parameters=solver_parameters)
     
     test = sqrt(assemble(inner(div(u, R, True), div(u, R, True)) * 2 * np.pi * R * dx))
     print("divergence is ", test)
+
     Z_out = MixedFunctionSpace([*Vd])
     z_out = Function(Z_out)
     (uper_out_sub, upar_out_sub) = z_out.subfunctions
     uper_out_sub.assign(uper_sub); upar_out_sub.assign(upar_sub)
 
     return z_out
+
 
 
 class HelicitySolver:

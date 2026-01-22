@@ -11,15 +11,13 @@ import os
 from firedrake import inner as fd_inner; from firedrake import div as fd_div
 from tools import inner, curl, cross, grad, div, get_spaces, project_div_free, HelicitySolver
 from solvers import build_nonlinear_solver
+from netgen.geom2d import CSG2d, Circle
 
 
 
 def relaxation_pressure(
-    NR          = 16,
-    NZ          = 16,
-    refinement = 4,
-    order       = 4,
-    T           = 1e1,
+    order       = 2,
+    T           = 1e1 ,
     dt_val      = 2e-3,  # If using the golden stepsize, this should be set sufficiently low that a uniform stepsize does not see oscillations
     golden_dt   = True,  # Whether to use the golden stepsize schedule
     dt_danger   = 0.5,  # Value above which we use a stronger solver (linesearch)
@@ -35,52 +33,53 @@ def relaxation_pressure(
         
 
     # parameters for target ellipse
-    R0 = 0.25          # target disk radius (before y-stretch)
-    cx, cy = 1, 0.0
+    R0 = 20          # target disk radius (before y-stretch)
+    cx, cy = 25, 0.0
     dy_stretch = 2.0  # stretch factor in y-direction to make an ellipse   
 
-    """Can comment out following code to generate ellipse mesh"""
-    # # base mesh
-    # mesh = UnitDiskMesh(refinement)
-    # # Generating ellipse
-    # x = SpatialCoordinate(mesh)
-    # X = as_vector((R0 * x[0] + cx,
-    #             R0 * dy_stretch * x[1] + cy))
-    # mesh.coordinates.interpolate(X)
-    # (R, Z) = SpatialCoordinate(mesh)
+    # create geometry
+    geo = CSG2d()
+    c = Circle(center=(cx, cy), radius=R0, mat="oval", bc="oval_bc")
+    oval = c.Scale((1, dy_stretch))   
+    geo.Add(oval)
+    # generate mesh (choose appropriate maxh)
+    m = geo.GenerateMesh(maxh=0.01 * R0 * dy_stretch)
 
-    mesh = Mesh('ellipse_occ.msh')
+    # convert to ngsolve.Mesh and optionally curve the boundary
+    mesh = Mesh(m)
+    VTKFile("mesh.pvd").write(mesh)
+
     (R, Z) = SpatialCoordinate(mesh)
     # Function spaces
     (Vg_, _, _, _, Vc, Vd) = get_spaces(mesh, order)
     V = MixedFunctionSpace([*Vd, *Vc, *Vc, *Vc, *Vc, Vg_])
-
+  
     # Trial functions
     v = Function(V)
     (Bper, Bpar, jper, jpar, Hper, Hpar, uper, upar, Eper, Epar, p) = split(v)
-    B = (Bper, Bpar); j = (jper, jpar); H = (Hper, Hpar); u = (uper, upar); E = (Eper, Epar)
+    B = (Bper, Bpar/R); j = (jper / R, jpar); H = (Hper / R, Hpar); u = (uper / R, upar); E = (Eper / R, Epar)
 
 
     (Bper_sub, Bpar_sub, jper_sub, jpar_sub, Hper_sub, Hpar_sub, uper_sub, upar_sub, Eper_sub, Epar_sub, p_sub) = v.subfunctions
     Bper_sub.rename("Magnetic field (perpendicular)")
-    Bpar_sub.rename("Magnetic field (parallel)")
-    jper_sub.rename("Current (perpendicular)")
+    Bpar_sub.rename("Magnetic field (parallel) * R")
+    jper_sub.rename("Current (perpendicular) * R")
     jpar_sub.rename("Current (parallel)")
-    Hper_sub.rename("Auxiliary magnetic field (perpendicular)")
+    Hper_sub.rename("Auxiliary magnetic field (perpendicular) * R")
     Hpar_sub.rename("Auxiliary magnetic field (parallel)")
-    uper_sub.rename("Velocity (perpendicular)")
+    uper_sub.rename("Velocity (perpendicular) * R")
     upar_sub.rename("Velocity (parallel)")
-    Eper_sub.rename("Electric field (perpendicular)")
+    Eper_sub.rename("Electric field (perpendicular) * R")
     Epar_sub.rename("Electric field (parallel)")
     p_sub.rename("Pressure")
 
     # Test functions
     (Bper_t, Bpar_t, jper_t, jpar_t, Hper_t, Hpar_t, uper_t, upar_t, Eper_t, Epar_t, p_t) = split(TestFunction(V))
-    B_t = (Bper_t, Bpar_t); j_t = (jper_t, jpar_t); H_t = (Hper_t, Hpar_t); u_t = (uper_t, upar_t); E_t = (Eper_t, Epar_t)
+    B_t = (Bper_t, Bpar_t/R); j_t = (jper_t/R, jpar_t); H_t = (Hper_t / R, Hpar_t); u_t = (uper_t / R, upar_t); E_t = (Eper_t / R, Epar_t)
 
     # Boris & Tom's fun ICs
     helices = (  # (Position, Radius, Strength, Circulation)
-    ( (cx, cy), R0/4, 1, 1),
+    ( (cx, cy), 3*R0/4, 1, 1),
     )
 
     def helix(position, radius, strength, circulation):
@@ -100,35 +99,31 @@ def relaxation_pressure(
     solver_parameters = {
         # SNES (nonlinear) opts
         "snes_type": "newtonls",
-        "snes_rtol": 1e-10,
-        "snes_atol": 1e-12,
+        "snes_rtol": 1e-14,
+        "snes_atol": 1e-15,
         "snes_max_it": 10,
-        "snes_monitor": None,               # turns on SNES iteration monitoring
-        "snes_converged_reason": None,      # print why SNES stopped
-
+        # "snes_monitor": None,               # turns on SNES iteration monitoring
+        # "snes_converged_reason": None,      # print why SNES stopped
         # preconditioner / direct solver (MUMPS)
         "ksp_type": "preonly",
         "pc_type": "lu",
         "pc_factor_mat_solver_type": "mumps",
     }
-
+    # Setting up divergence free B_0
     v_prev = project_div_free((Bper_ic, Bpar_ic), mesh, order, cylindrical = True, solver_parameters = solver_parameters)
     (Bper_prev, Bpar_prev) = split(v_prev)
     (Bper_prev_sub, Bpar_prev_sub) = v_prev.subfunctions
     Bper_sub.assign(Bper_prev_sub); Bpar_sub.assign(Bpar_prev_sub)
-
-    divnorm_init = sqrt(assemble(inner(div(B, R, True), div(B, R, True)) * 2 * np.pi * R * dx))
-    print("Delete this - divB norm after div free projection is", divnorm_init)
 
     # Time variable
     t = Constant(0)
     dt = Constant(dt_val)
 
     # Midpoint/change variables
-    B_avg = ((Bper+Bper_prev)/2,  (Bpar + Bpar_prev)/2)
-    dB_dt = ((Bper-Bper_prev)/dt, (Bpar-Bpar_prev)/dt)
+    B_avg = ((Bper+Bper_prev)/2,  (Bpar + Bpar_prev)/2 / R)
+    dB_dt = ((Bper-Bper_prev)/dt, (Bpar-Bpar_prev)/dt /R)
     
-    
+
     # Form
     F = (  # dB/dt = - curl E
         inner(dB_dt, B_t)
@@ -152,8 +147,8 @@ def relaxation_pressure(
       - inner(cross(H, u), E_t)
     ) * R * dx
     F += (  # div u = 0
-        inner(u, grad(p_t))
-    ) * R * dx
+        -inner(u, grad(p_t))* R * dx
+            )
 
     # Boundary conditions
     bcs = [DirichletBC(V.sub(i), 0, "on_boundary") for i in range(len(V))]
@@ -170,9 +165,9 @@ def relaxation_pressure(
             "snes_linesearch_type": "bt",
             "snes_max_it": 200,
             # "snes_atol": 5e-3,
-            "snes_monitor": None,
-            "snes_converged_reason": None,
-            "snes_linesearch_monitor": None,
+            # "snes_monitor": None,
+            # "snes_converged_reason": None,
+            # "snes_linesearch_monitor": None,
         }
 
     # Build solver
@@ -231,7 +226,6 @@ def relaxation_pressure(
         # Update previous step
         Bper_prev_sub.assign(Bper_sub)
         Bpar_prev_sub.assign(Bpar_sub)
-
 
         # Output
         if iteration % output_freq == 0:
