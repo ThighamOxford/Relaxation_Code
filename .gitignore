@@ -3,3 +3,6 @@
 *.pyc
 *.DS_Store
 *.gmsh
+*.csv
+*.msh
+*.ipynb

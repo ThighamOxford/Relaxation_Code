@@ -40,6 +40,7 @@ def grad(X):
     No cylindrical case as we have axisymmetry.
     Returns (None, grad(X)).
     """
+    zero = Constant(0.0)
     return (None, fd_grad(X))
 
 def curl(X, R = None , cylindrical = False):
