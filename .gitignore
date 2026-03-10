@@ -1,7 +1,7 @@
 *.pvd
 *.vtu
 *.pyc
-*.DS_Store
+.DS_Store
 *.gmsh
 *.csv
 *.ipynb
