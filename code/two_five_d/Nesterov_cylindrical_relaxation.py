@@ -24,7 +24,7 @@ def relaxation_pressure(
     golden_dt   = False,  # Whether to use the golden stepsize schedule
     dt_danger   = 3.0, #0.1,  # Value above which we use a stronger solver (linesearch)
     dt_max      = 3.0,  # Maximum stepsize
-    output_dir  = "output_cylindrical_GD",
+    output_dir  = "output_cylindrical_Nest",
     output_freq = 1,
 ):
     """
@@ -44,7 +44,7 @@ def relaxation_pressure(
     # Function spaces
     (Vg_, _, _, _, Vc, Vd) = get_spaces(mesh, order)
     V = MixedFunctionSpace([*Vd, *Vc, *Vc, *Vc, *Vc, Vg_])
-  
+    U_prev = MixedFunctionSpace(Vc)
     # Trial functions
     v = Function(V)
     (Bper, Bpar, jper, jpar, Hper, Hpar, uper, upar, Eper, Epar, p) = split(v)
@@ -106,6 +106,12 @@ def relaxation_pressure(
     (Bper_prev_sub, Bpar_prev_sub) = B_prev.subfunctions
     Bper_sub.assign(Bper_prev_sub); Bpar_sub.assign(Bpar_prev_sub)
 
+    u_prev = Function(U_prev)
+    (uper_prev, upar_prev) = split(u_prev)
+    (uper_prev_sub, upar_prev_sub) = u_prev.subfunctions
+
+    
+
     # Time variable
     t = Constant(0)
     dt = Constant(dt_val)
@@ -114,6 +120,9 @@ def relaxation_pressure(
     # Midpoint/change variables
     B_avg = ((Bper+Bper_prev)/2,  (Bpar + Bpar_prev)/2 / R)
     dB_dt = ((Bper-Bper_prev)/dt, (Bpar-Bpar_prev)/dt /R)
+    u_avg = ((uper+uper_prev)/2 /R,  (upar + upar_prev)/2)
+    du_dt = ((uper-uper_prev)/dt /R, (upar-upar_prev)/dt)
+
 
     # Form
     F = (  # dB/dt = - curl E
@@ -128,14 +137,15 @@ def relaxation_pressure(
         inner(H, H_t)
       - inner(B_avg, H_t)
     ) * R * dx
-    F += (  # u = j x H - grad p
-        inner(u, u_t)
+    F += (  # udot = j x H - grad p - 3/t u
+        inner(du_dt, u_t)
       - tau*inner(cross(j, H), u_t)  #/ scale
       + tau*inner(grad(p), u_t) #/ scale
+      + 3/(t-dt/2) * inner(u_avg, u_t)
     ) * R * dx
     F += (  # E = H x u
         inner(E, E_t)
-      - inner(cross(H, u), E_t)
+      - inner(cross(H, u_avg), E_t)
     ) * R * dx
     F += (  # div u = 0
         -inner(u, grad(p_t))* R * dx
@@ -174,7 +184,7 @@ def relaxation_pressure(
     pvd.write(Bper_sub, Bpar_scaled)
 
     
-    with open("data_GD.csv", mode="w", newline="", encoding="utf-8") as f:
+    with open("data_Nest.csv", mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
 
         # write header once
